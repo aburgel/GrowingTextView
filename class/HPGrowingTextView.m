@@ -26,34 +26,23 @@
 //	THE SOFTWARE.
 
 #import "HPGrowingTextView.h"
-#import "HPTextViewInternal.h"
 
-@interface HPGrowingTextView(private)
--(void)commonInitialiser;
--(void)resizeTextView:(NSInteger)newSizeH;
--(void)growDidStop;
+@interface HPGrowingTextView ()
+
+- (void)commonInitialiser;
+- (void)resizeTextView:(CGFloat)height;
+- (void)growDidStop;
+
 @end
 
 @implementation HPGrowingTextView
-@synthesize internalTextView;
-@synthesize delegate;
-@synthesize maxHeight;
-@synthesize minHeight;
-@synthesize font;
-@synthesize textColor;
-@synthesize textAlignment; 
-@synthesize selectedRange;
-@synthesize editable;
-@synthesize dataDetectorTypes;
-@synthesize animateHeightChange;
-@synthesize animationDuration;
-@synthesize returnKeyType;
-@dynamic placeholder;
-@dynamic placeholderColor;
+{
+    BOOL _isShowingPlaceholder;
+    UIColor *_textColor;
+}
 
 // having initwithcoder allows us to use HPGrowingTextView in a Nib. -- aob, 9/2011
-- (id)initWithCoder:(NSCoder *)aDecoder
-{
+- (id)initWithCoder:(NSCoder *)aDecoder {
     if ((self = [super initWithCoder:aDecoder])) {
         [self commonInitialiser];
     }
@@ -84,169 +73,121 @@
 -(void)commonInitialiser
 #endif
 {
-    // Initialization code
-    CGRect r = self.frame;
-    r.origin.y = 0;
-    r.origin.x = 0;
 #if __IPHONE_OS_VERSION_MIN_REQUIRED >= 70000
-    internalTextView = [[HPTextViewInternal alloc] initWithFrame:r textContainer:textContainer];
+    _internalTextView = [[UITextView alloc] initWithFrame:self.bounds textContainer:textContainer];
 #else
-    internalTextView = [[HPTextViewInternal alloc] initWithFrame:r];
+    _internalTextView = [[UITextView alloc] initWithFrame:self.bounds];
 #endif
-    internalTextView.delegate = self;
-    internalTextView.scrollEnabled = NO;
-    internalTextView.font = [UIFont fontWithName:@"Helvetica" size:13]; 
-    internalTextView.contentInset = UIEdgeInsetsZero;		
-    internalTextView.showsHorizontalScrollIndicator = NO;
-    internalTextView.text = @"-";
-    [self addSubview:internalTextView];
-    
-    minHeight = internalTextView.frame.size.height;
-    minNumberOfLines = 1;
-    
-    animateHeightChange = YES;
-    animationDuration = 0.1f;
-    
-    internalTextView.text = @"";
-    
-    [self setMaxNumberOfLines:3];
+    _internalTextView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    _internalTextView.delegate = self;
+    _internalTextView.scrollEnabled = NO;
+    _internalTextView.font = [UIFont fontWithName:@"Helvetica" size:13];
+    _internalTextView.contentInset = UIEdgeInsetsZero;
+    _internalTextView.showsHorizontalScrollIndicator = NO;
+    _internalTextView.text = @"";
+    [self addSubview:_internalTextView];
 
-    [self setPlaceholderColor:[UIColor lightGrayColor]];
-    internalTextView.displayPlaceHolder = YES;
+    _textColor = _internalTextView.textColor;
+
+    _minHeight = _internalTextView.frame.size.height;
+    _maxHeight = CGFLOAT_MAX;
+
+    _animateHeightChange = YES;
+    _animationDuration = 0.1f;
+    _isShowingPlaceholder = NO;
+
+    self.placeholderColor = [UIColor lightGrayColor];
+
+    [self setMinNumberOfLines:1];
+    [self setMaxNumberOfLines:3];
 }
 
--(CGSize)sizeThatFits:(CGSize)size
-{
+- (CGSize)sizeThatFits:(CGSize)size {
     if (self.text.length == 0) {
-        size.height = minHeight;
+        size.height = self.minHeight;
     }
     return size;
 }
 
--(void)layoutSubviews
-{
-    [super layoutSubviews];
-    
-	CGRect r = self.bounds;
-	r.origin.y = 0;
-	r.origin.x = contentInset.left;
-    r.size.width -= contentInset.left + contentInset.right;
-    
-    internalTextView.frame = r;
+- (void)setContentInset:(UIEdgeInsets)inset {
+    _contentInset = inset;
+
+    CGRect insetFrame = UIEdgeInsetsInsetRect(self.internalTextView.frame, inset);
+    self.internalTextView.frame = insetFrame;
 }
 
--(void)setContentInset:(UIEdgeInsets)inset
-{
-    contentInset = inset;
-    
-    CGRect r = self.frame;
-    r.origin.y = inset.top - inset.bottom;
-    r.origin.x = inset.left;
-    r.size.width -= inset.left + inset.right;
-    
-    internalTextView.frame = r;
-    
-    [self setMaxNumberOfLines:maxNumberOfLines];
-    [self setMinNumberOfLines:minNumberOfLines];
-}
+- (void)setMaxNumberOfLines:(NSInteger)maxNumberOfLines {
+    if (maxNumberOfLines == 0 && self.maxHeight > 0) return; // the user specified a maxHeight themselves.
 
--(UIEdgeInsets)contentInset
-{
-    return contentInset;
-}
-
--(void)setMaxNumberOfLines:(int)n
-{
-    if(n == 0 && maxHeight > 0) return; // the user specified a maxHeight themselves.
-    
     // Use internalTextView for height calculations, thanks to Gwynne <http://blog.darkrainfall.org/>
-    NSString *saveText = internalTextView.text, *newText = @"-";
-    
-    internalTextView.delegate = nil;
-    internalTextView.hidden = YES;
-    
-    for (int i = 1; i < n; ++i)
+    NSString *saveText = self.text;
+    NSString *newText = @"-";
+
+    self.internalTextView.delegate = nil;
+    self.internalTextView.hidden = YES;
+
+    for (NSInteger i = 1; i < maxNumberOfLines; ++i)
         newText = [newText stringByAppendingString:@"\n|W|"];
-    
-    internalTextView.text = newText;
-    
-    maxHeight = [self measureHeight];
-    
-    internalTextView.text = saveText;
-    internalTextView.hidden = NO;
-    internalTextView.delegate = self;
-    
+
+    self.internalTextView.text = newText;
+
+    _maxHeight = [self measureHeight];
+
+    self.internalTextView.text = saveText;
+    self.internalTextView.hidden = NO;
+    self.internalTextView.delegate = self;
+
     [self sizeToFit];
-    
-    maxNumberOfLines = n;
+
+    _maxNumberOfLines = maxNumberOfLines;
 }
 
--(int)maxNumberOfLines
+- (void)setMaxHeight:(CGFloat)maxHeight
 {
-    return maxNumberOfLines;
+    _maxHeight = maxHeight;
+    self.maxNumberOfLines = 0;
 }
 
-- (void)setMaxHeight:(int)height
+-(void)setMinNumberOfLines:(NSInteger)minNumberOfLines
 {
-    maxHeight = height;
-    maxNumberOfLines = 0;
-}
-
--(void)setMinNumberOfLines:(int)m
-{
-    if(m == 0 && minHeight > 0) return; // the user specified a minHeight themselves.
+    if (minNumberOfLines == 0 && self.minHeight > 0) return; // the user specified a minHeight themselves.
 
 	// Use internalTextView for height calculations, thanks to Gwynne <http://blog.darkrainfall.org/>
-    NSString *saveText = internalTextView.text, *newText = @"-";
-    
-    internalTextView.delegate = nil;
-    internalTextView.hidden = YES;
-    
-    for (int i = 1; i < m; ++i)
+    NSString *saveText = self.text;
+    NSString *newText = @"-";
+
+    self.internalTextView.delegate = nil;
+    self.internalTextView.hidden = YES;
+
+    for (NSInteger i = 1; i < minNumberOfLines; ++i)
         newText = [newText stringByAppendingString:@"\n|W|"];
-    
-    internalTextView.text = newText;
-    
-    minHeight = [self measureHeight];
-    
-    internalTextView.text = saveText;
-    internalTextView.hidden = NO;
-    internalTextView.delegate = self;
-    
+
+    self.internalTextView.text = newText;
+
+    _minHeight = [self measureHeight];
+
+    self.internalTextView.text = saveText;
+    self.internalTextView.hidden = NO;
+    self.internalTextView.delegate = self;
+
     [self sizeToFit];
-    
-    minNumberOfLines = m;
+
+    _minNumberOfLines = minNumberOfLines;
 }
 
--(int)minNumberOfLines
+- (void)setMinHeight:(CGFloat)minHeight
 {
-    return minNumberOfLines;
+    _minHeight = minHeight;
+    self.minNumberOfLines = 0;
 }
 
-- (void)setMinHeight:(int)height
-{
-    minHeight = height;
-    minNumberOfLines = 0;
-}
-
-- (NSString *)placeholder
-{
-    return internalTextView.placeholder;
-}
-
-- (void)setPlaceholder:(NSString *)placeholder
-{
-    [internalTextView setPlaceholder:placeholder];
-}
-
-- (UIColor *)placeholderColor
-{
-    return internalTextView.placeholderColor;
-}
-
-- (void)setPlaceholderColor:(UIColor *)placeholderColor 
-{
-    [internalTextView setPlaceholderColor:placeholderColor];
+- (void)setPlaceholder:(NSString *)placeholder {
+    _placeholder = placeholder;
+    if ( self.text == nil || self.text.length == 0 || _isShowingPlaceholder ) {
+        self.text = _placeholder;
+        self.internalTextView.textColor = self.placeholderColor;
+        _isShowingPlaceholder = YES;
+    }
 }
 
 - (void)textViewDidChange:(UITextView *)textView
@@ -257,46 +198,42 @@
 - (void)refreshHeight
 {
 	//size of content, so we can set the frame of self
-	NSInteger newSizeH = [self measureHeight];
-	if (newSizeH < minHeight || !internalTextView.hasText) {
-        newSizeH = minHeight; //not smalles than minHeight
+	CGFloat newSizeH = [self measureHeight];
+	if (newSizeH < self.minHeight || !self.internalTextView.hasText) {
+        newSizeH = self.minHeight; // not smaller than minHeight
     }
-    else if (maxHeight && internalTextView.frame.size.height > maxHeight) {
-        newSizeH = maxHeight; // not taller than maxHeight
+    else if (self.maxHeight && self.internalTextView.frame.size.height > self.maxHeight) {
+        newSizeH = self.maxHeight; // not taller than maxHeight
     }
-    
-	if (internalTextView.frame.size.height != newSizeH)
-	{
-        // [fixed] Pasting too much text into the view failed to fire the height change, 
+
+	if (self.internalTextView.frame.size.height != newSizeH) {
+        // [fixed] Pasting too much text into the view failed to fire the height change,
         // thanks to Gwynne <http://blog.darkrainfall.org/>
-        
-        if (newSizeH > maxHeight && internalTextView.frame.size.height <= maxHeight)
-        {
-            newSizeH = maxHeight;
-        }
-        
-		if (newSizeH <= maxHeight)
-		{
-            if(animateHeightChange) {
-                
+
+        if (newSizeH > self.maxHeight && self.internalTextView.frame.size.height <= self.maxHeight)
+            newSizeH = self.maxHeight;
+
+		if (newSizeH <= self.maxHeight) {
+            if (self.animateHeightChange) {
+
                 if ([UIView resolveClassMethod:@selector(animateWithDuration:animations:)]) {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
-                    [UIView animateWithDuration:animationDuration 
+                    [UIView animateWithDuration:self.animationDuration
                                           delay:0 
                                         options:(UIViewAnimationOptionAllowUserInteraction|
-                                                 UIViewAnimationOptionBeginFromCurrentState)                                 
+                                                 UIViewAnimationOptionBeginFromCurrentState)
                                      animations:^(void) {
                                          [self resizeTextView:newSizeH];
-                                     } 
+                                     }
                                      completion:^(BOOL finished) {
-                                         if ([delegate respondsToSelector:@selector(growingTextView:didChangeHeight:)]) {
-                                             [delegate growingTextView:self didChangeHeight:newSizeH];
+                                         if ([_delegate respondsToSelector:@selector(growingTextView:didChangeHeight:)]) {
+                                             [_delegate growingTextView:self didChangeHeight:newSizeH];
                                          }
                                      }];
 #endif
                 } else {
                     [UIView beginAnimations:@"" context:nil];
-                    [UIView setAnimationDuration:animationDuration];
+                    [UIView setAnimationDuration:self.animationDuration];
                     [UIView setAnimationDelegate:self];
                     [UIView setAnimationDidStopSelector:@selector(growDidStop)];
                     [UIView setAnimationBeginsFromCurrentState:YES];
@@ -304,311 +241,275 @@
                     [UIView commitAnimations];
                 }
             } else {
-                [self resizeTextView:newSizeH];                
+                [self resizeTextView:newSizeH];
                 // [fixed] The growingTextView:didChangeHeight: delegate method was not called at all when not animating height changes.
                 // thanks to Gwynne <http://blog.darkrainfall.org/>
-                
-                if ([delegate respondsToSelector:@selector(growingTextView:didChangeHeight:)]) {
-                    [delegate growingTextView:self didChangeHeight:newSizeH];
-                }	
+
+                if ([self.delegate respondsToSelector:@selector(growingTextView:didChangeHeight:)]) {
+                    [self.delegate growingTextView:self didChangeHeight:newSizeH];
+                }
             }
 		}
-        
+
         // if our new height is greater than the maxHeight
         // sets not set the height or move things
         // around and enable scrolling
-		if (newSizeH >= maxHeight)
-		{
-			if(!internalTextView.scrollEnabled){
-				internalTextView.scrollEnabled = YES;
-				[internalTextView flashScrollIndicators];
+		if (newSizeH >= self.maxHeight) {
+			if (!self.internalTextView.scrollEnabled){
+				self.internalTextView.scrollEnabled = YES;
+				[self.internalTextView flashScrollIndicators];
 			}
-			
 		} else {
-			internalTextView.scrollEnabled = NO;
+			self.internalTextView.scrollEnabled = NO;
 		}
-		
+
         // scroll to caret (needed on iOS7)
         if ([self respondsToSelector:@selector(snapshotViewAfterScreenUpdates:)])
         {
-            CGRect r = [internalTextView caretRectForPosition:internalTextView.selectedTextRange.end];
-            CGFloat caretY =  MAX(r.origin.y - internalTextView.frame.size.height + r.size.height + 8, 0);
-            if(internalTextView.contentOffset.y < caretY && r.origin.y != INFINITY)
-                internalTextView.contentOffset = CGPointMake(0, MIN(caretY, internalTextView.contentSize.height));
+            CGRect r = [self.internalTextView caretRectForPosition:self.internalTextView.selectedTextRange.end];
+            CGFloat caretY =  MAX(r.origin.y - self.internalTextView.frame.size.height + r.size.height + 8, 0);
+            if (self.internalTextView.contentOffset.y < caretY && r.origin.y != INFINITY)
+                self.internalTextView.contentOffset = CGPointMake(0, MIN(caretY, self.internalTextView.contentSize.height));
         }
 	}
-    // Display (or not) the placeholder string
-    
-    BOOL wasDisplayingPlaceholder = internalTextView.displayPlaceHolder;
-    internalTextView.displayPlaceHolder = self.internalTextView.text.length == 0;
-	
-    if (wasDisplayingPlaceholder != internalTextView.displayPlaceHolder) {
-        [internalTextView setNeedsDisplay];
-    }
-    
+
     // Tell the delegate that the text view changed
-	
-    if ([delegate respondsToSelector:@selector(growingTextViewDidChange:)]) {
-		[delegate growingTextViewDidChange:self];
+    if ([self.delegate respondsToSelector:@selector(growingTextViewDidChange:)]) {
+		[self.delegate growingTextViewDidChange:self];
 	}
-	
 }
 
 // Code from apple developer forum - @Steve Krulewitz, @Mark Marszal, @Eric Silverberg
-- (CGFloat)measureHeight
-{
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
-    if ([self respondsToSelector:@selector(snapshotViewAfterScreenUpdates:)])
-    {
-        CGRect frame = internalTextView.bounds;
-        CGSize fudgeFactor;
+- (CGFloat)measureHeight {
+    CGFloat height;
+    if ([NSAttributedString class] && [NSAttributedString instancesRespondToSelector:@selector(boundingRectWithSize:options:context:)]) {
+        CGRect frame = self.internalTextView.bounds;
+
         // The padding added around the text on iOS6 and iOS7 is different.
-        fudgeFactor = CGSizeMake(10.0, 16.0);
-        
+        CGSize fudgeFactor = CGSizeMake(10.0, 16.0);
+
         frame.size.height -= fudgeFactor.height;
         frame.size.width -= fudgeFactor.width;
-        
-        NSMutableAttributedString* textToMeasure;
-        if(internalTextView.attributedText && internalTextView.attributedText.length > 0){
-            textToMeasure = [[NSMutableAttributedString alloc] initWithAttributedString:internalTextView.attributedText];
+
+        NSMutableAttributedString *textToMeasure;
+        if (self.internalTextView.attributedText && self.internalTextView.attributedText.length > 0) {
+            textToMeasure = [[NSMutableAttributedString alloc] initWithAttributedString:self.internalTextView.attributedText];
         }
-        else{
-            textToMeasure = [[NSMutableAttributedString alloc] initWithString:internalTextView.text];
-            [textToMeasure addAttribute:NSFontAttributeName value:internalTextView.font range:NSMakeRange(0, textToMeasure.length)];
+        else {
+            textToMeasure = [[NSMutableAttributedString alloc] initWithString:self.internalTextView.text attributes:@{NSFontAttributeName: self.internalTextView.font}];
         }
-        
-        if ([textToMeasure.string hasSuffix:@"\n"])
-        {
-            [textToMeasure appendAttributedString:[[NSAttributedString alloc] initWithString:@"-" attributes:@{NSFontAttributeName: internalTextView.font}]];
+
+        if ([textToMeasure.string hasSuffix:@"\n"]) {
+            [textToMeasure appendAttributedString:[[NSAttributedString alloc] initWithString:@"-" attributes:@{NSFontAttributeName: self.internalTextView.font}]];
         }
-        
+
         // NSAttributedString class method: boundingRectWithSize:options:context is
-        // available only on ios7.0 sdk.
-        CGRect size = [textToMeasure boundingRectWithSize:CGSizeMake(CGRectGetWidth(frame), MAXFLOAT)
+        // available only on ios6.0 sdk.
+        CGRect size = [textToMeasure boundingRectWithSize:CGSizeMake(CGRectGetWidth(frame), CGFLOAT_MAX)
                                                   options:NSStringDrawingUsesLineFragmentOrigin
                                                   context:nil];
-        
-        return CGRectGetHeight(size) + fudgeFactor.height;
+
+        height = ceil(CGRectGetHeight(size) + fudgeFactor.height);
     }
     else
     {
-        return self.internalTextView.contentSize.height;
+        height = self.internalTextView.contentSize.height;
     }
-#else
-    return self.internalTextView.contentSize.height;
-#endif
+
+    return height + self.contentInset.top + self.contentInset.bottom;
 }
 
--(void)resizeTextView:(NSInteger)newSizeH
+- (void)resizeTextView:(CGFloat)height
 {
-    if ([delegate respondsToSelector:@selector(growingTextView:willChangeHeight:)]) {
-        [delegate growingTextView:self willChangeHeight:newSizeH];
+    if ([self.delegate respondsToSelector:@selector(growingTextView:willChangeHeight:)]) {
+        [self.delegate growingTextView:self willChangeHeight:height];
     }
-    
+
     CGRect internalTextViewFrame = self.frame;
-    internalTextViewFrame.size.height = newSizeH; // + padding
+    internalTextViewFrame.size.height = height; // + padding
     self.frame = internalTextViewFrame;
-    
-    internalTextViewFrame.origin.y = contentInset.top - contentInset.bottom;
-    internalTextViewFrame.origin.x = contentInset.left;
-    internalTextViewFrame.size.width = internalTextView.contentSize.width;
-    
-    if(!CGRectEqualToRect(internalTextView.frame, internalTextViewFrame)) internalTextView.frame = internalTextViewFrame;
 }
 
-- (void)growDidStop
-{
-	if ([delegate respondsToSelector:@selector(growingTextView:didChangeHeight:)]) {
-		[delegate growingTextView:self didChangeHeight:self.frame.size.height];
+- (void)growDidStop {
+	if ([self.delegate respondsToSelector:@selector(growingTextView:didChangeHeight:)]) {
+		[self.delegate growingTextView:self didChangeHeight:self.frame.size.height];
 	}
 }
 
--(void)touchesEnded:(NSSet *)touches withEvent:(UIEvent *)event
-{
-    [internalTextView becomeFirstResponder];
+- (void)touchesEnded:(NSSet *)touches withEvent:(UIEvent *)event {
+    [self.internalTextView becomeFirstResponder];
 }
 
-- (BOOL)becomeFirstResponder
-{
+- (BOOL)becomeFirstResponder {
     [super becomeFirstResponder];
     return [self.internalTextView becomeFirstResponder];
 }
 
--(BOOL)resignFirstResponder
-{
+- (BOOL)resignFirstResponder {
 	[super resignFirstResponder];
-	return [internalTextView resignFirstResponder];
+	return [self.internalTextView resignFirstResponder];
 }
 
--(BOOL)isFirstResponder
-{
-  return [self.internalTextView isFirstResponder];
+- (BOOL)isFirstResponder {
+    return [self.internalTextView isFirstResponder];
 }
-
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 #pragma mark UITextView properties
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
--(void)setText:(NSString *)newText
-{
-    internalTextView.text = newText;
-    
+- (void)setText:(NSString *)newText {
+    self.internalTextView.text = newText;
+
+    if ( (!newText || newText.length == 0) && ![self.internalTextView isFirstResponder] )
+    {
+        self.internalTextView.text = self.placeholder;
+        self.internalTextView.textColor = self.placeholderColor;
+        _isShowingPlaceholder = YES;
+    }
+    else if ( _isShowingPlaceholder )
+    {
+        self.internalTextView.textColor = self.textColor;
+        _isShowingPlaceholder = NO;
+    }
+
     // include this line to analyze the height of the textview.
     // fix from Ankit Thakur
-    [self performSelector:@selector(textViewDidChange:) withObject:internalTextView];
+    [self textViewDidChange:self.internalTextView];
 }
 
--(NSString*) text
-{
-    return internalTextView.text;
-}
+- (NSString *)text {
+    if ( _isShowingPlaceholder )
+        return @"";
 
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
--(void)setFont:(UIFont *)afont
-{
-	internalTextView.font= afont;
-	
-	[self setMaxNumberOfLines:maxNumberOfLines];
-	[self setMinNumberOfLines:minNumberOfLines];
-}
-
--(UIFont *)font
-{
-	return internalTextView.font;
-}	
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
--(void)setTextColor:(UIColor *)color
-{
-	internalTextView.textColor = color;
-}
-
--(UIColor*)textColor{
-	return internalTextView.textColor;
+    return self.internalTextView.text;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
--(void)setBackgroundColor:(UIColor *)backgroundColor
-{
-  [super setBackgroundColor:backgroundColor];
-	internalTextView.backgroundColor = backgroundColor;
+- (void)setFont:(UIFont *)afont {
+	self.internalTextView.font = afont;
+
+	[self setMaxNumberOfLines:_maxNumberOfLines];
+	[self setMinNumberOfLines:_minNumberOfLines];
 }
 
--(UIColor*)backgroundColor
-{
-  return internalTextView.backgroundColor;
-}
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
--(void)setTextAlignment:(NSTextAlignment)aligment
-{
-	internalTextView.textAlignment = aligment;
-}
-
--(NSTextAlignment)textAlignment
-{
-	return internalTextView.textAlignment;
+- (UIFont *)font {
+	return self.internalTextView.font;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
--(void)setSelectedRange:(NSRange)range
-{
-	internalTextView.selectedRange = range;
+- (void)setTextColor:(UIColor *)color {
+    _textColor = color;
+	self.internalTextView.textColor = color;
 }
 
--(NSRange)selectedRange
-{
-	return internalTextView.selectedRange;
-}
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-- (void)setIsScrollable:(BOOL)isScrollable
-{
-    internalTextView.scrollEnabled = isScrollable;
-}
-
-- (BOOL)isScrollable
-{
-    return internalTextView.scrollEnabled;
+- (UIColor *)textColor {
+	return _textColor;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
--(void)setEditable:(BOOL)beditable
-{
-	internalTextView.editable = beditable;
+- (void)setBackgroundColor:(UIColor *)backgroundColor {
+    [super setBackgroundColor:backgroundColor];
+	self.internalTextView.backgroundColor = backgroundColor;
 }
 
--(BOOL)isEditable
-{
-	return internalTextView.editable;
-}
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
--(void)setReturnKeyType:(UIReturnKeyType)keyType
-{
-	internalTextView.returnKeyType = keyType;
-}
-
--(UIReturnKeyType)returnKeyType
-{
-	return internalTextView.returnKeyType;
+- (UIColor *)backgroundColor {
+    return self.internalTextView.backgroundColor;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-- (void)setKeyboardType:(UIKeyboardType)keyType
-{
-	internalTextView.keyboardType = keyType;
+- (void)setTextAlignment:(NSTextAlignment)aligment {
+	self.internalTextView.textAlignment = aligment;
 }
 
-- (UIKeyboardType)keyboardType
-{
-	return internalTextView.keyboardType;
-}
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-- (void)setEnablesReturnKeyAutomatically:(BOOL)enablesReturnKeyAutomatically
-{
-  internalTextView.enablesReturnKeyAutomatically = enablesReturnKeyAutomatically;
-}
-
-- (BOOL)enablesReturnKeyAutomatically
-{
-  return internalTextView.enablesReturnKeyAutomatically;
+- (NSTextAlignment)textAlignment {
+	return self.internalTextView.textAlignment;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
--(void)setDataDetectorTypes:(UIDataDetectorTypes)datadetector
-{
-	internalTextView.dataDetectorTypes = datadetector;
+- (void)setSelectedRange:(NSRange)range {
+	self.internalTextView.selectedRange = range;
 }
 
--(UIDataDetectorTypes)dataDetectorTypes
-{
-	return internalTextView.dataDetectorTypes;
+- (NSRange)selectedRange {
+	return self.internalTextView.selectedRange;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-- (BOOL)hasText{
-	return [internalTextView hasText];
+- (void)setIsScrollable:(BOOL)isScrollable {
+    self.internalTextView.scrollEnabled = isScrollable;
+}
+
+- (BOOL)isScrollable {
+    return self.internalTextView.scrollEnabled;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+-(void)setEditable:(BOOL)editable {
+	self.internalTextView.editable = editable;
+}
+
+- (BOOL)isEditable {
+	return self.internalTextView.editable;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+- (void)setReturnKeyType:(UIReturnKeyType)keyType {
+	self.internalTextView.returnKeyType = keyType;
+}
+
+- (UIReturnKeyType)returnKeyType {
+	return self.internalTextView.returnKeyType;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+- (void)setKeyboardType:(UIKeyboardType)keyType {
+	self.internalTextView.keyboardType = keyType;
+}
+
+- (UIKeyboardType)keyboardType {
+	return self.internalTextView.keyboardType;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+- (void)setEnablesReturnKeyAutomatically:(BOOL)enablesReturnKeyAutomatically {
+    self.internalTextView.enablesReturnKeyAutomatically = enablesReturnKeyAutomatically;
+}
+
+- (BOOL)enablesReturnKeyAutomatically {
+    return self.internalTextView.enablesReturnKeyAutomatically;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+- (void)setDataDetectorTypes:(UIDataDetectorTypes)datadetector {
+	self.internalTextView.dataDetectorTypes = datadetector;
+}
+
+- (UIDataDetectorTypes)dataDetectorTypes {
+	return self.internalTextView.dataDetectorTypes;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+- (BOOL)hasText {
+	return [self.internalTextView hasText];
 }
 
 - (void)scrollRangeToVisible:(NSRange)range
 {
-	[internalTextView scrollRangeToVisible:range];
+	[self.internalTextView scrollRangeToVisible:range];
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -619,9 +520,8 @@
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 - (BOOL)textViewShouldBeginEditing:(UITextView *)textView {
-	if ([delegate respondsToSelector:@selector(growingTextViewShouldBeginEditing:)]) {
-		return [delegate growingTextViewShouldBeginEditing:self];
-		
+	if ([self.delegate respondsToSelector:@selector(growingTextViewShouldBeginEditing:)]) {
+		return [self.delegate growingTextViewShouldBeginEditing:self];
 	} else {
 		return YES;
 	}
@@ -630,9 +530,8 @@
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 - (BOOL)textViewShouldEndEditing:(UITextView *)textView {
-	if ([delegate respondsToSelector:@selector(growingTextViewShouldEndEditing:)]) {
-		return [delegate growingTextViewShouldEndEditing:self];
-		
+	if ([self.delegate respondsToSelector:@selector(growingTextViewShouldEndEditing:)]) {
+		return [self.delegate growingTextViewShouldEndEditing:self];
 	} else {
 		return YES;
 	}
@@ -641,34 +540,41 @@
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 - (void)textViewDidBeginEditing:(UITextView *)textView {
-	if ([delegate respondsToSelector:@selector(growingTextViewDidBeginEditing:)]) {
-		[delegate growingTextViewDidBeginEditing:self];
+    if ( _isShowingPlaceholder )
+        self.text = @"";
+
+	if ([self.delegate respondsToSelector:@selector(growingTextViewDidBeginEditing:)]) {
+		[self.delegate growingTextViewDidBeginEditing:self];
 	}
 }
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-- (void)textViewDidEndEditing:(UITextView *)textView {		
-	if ([delegate respondsToSelector:@selector(growingTextViewDidEndEditing:)]) {
-		[delegate growingTextViewDidEndEditing:self];
+- (void)textViewDidEndEditing:(UITextView *)textView {
+	if ([self.delegate respondsToSelector:@selector(growingTextViewDidEndEditing:)]) {
+		[self.delegate growingTextViewDidEndEditing:self];
 	}
+
+    if ( textView.text == nil || textView.text.length == 0 )
+        self.text = @"";
 }
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 - (BOOL)textView:(UITextView *)textView shouldChangeTextInRange:(NSRange)range
  replacementText:(NSString *)atext {
-	
+
 	//weird 1 pixel bug when clicking backspace when textView is empty
-	if(![textView hasText] && [atext isEqualToString:@""]) return NO;
-	
+	if (![textView hasText] && [atext isEqualToString:@""])
+        return NO;
+
 	//Added by bretdabaker: sometimes we want to handle this ourselves
-    	if ([delegate respondsToSelector:@selector(growingTextView:shouldChangeTextInRange:replacementText:)])
-        	return [delegate growingTextView:self shouldChangeTextInRange:range replacementText:atext];
-	
+    if ([self.delegate respondsToSelector:@selector(growingTextView:shouldChangeTextInRange:replacementText:)])
+        return [self.delegate growingTextView:self shouldChangeTextInRange:range replacementText:atext];
+
 	if ([atext isEqualToString:@"\n"]) {
-		if ([delegate respondsToSelector:@selector(growingTextViewShouldReturn:)]) {
-			if (![delegate performSelector:@selector(growingTextViewShouldReturn:) withObject:self]) {
+		if ([self.delegate respondsToSelector:@selector(growingTextViewShouldReturn:)]) {
+			if (![self.delegate growingTextViewShouldReturn:self]) {
 				return YES;
 			} else {
 				[textView resignFirstResponder];
@@ -676,19 +582,16 @@
 			}
 		}
 	}
-	
+
 	return YES;
-	
-    
 }
+
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 - (void)textViewDidChangeSelection:(UITextView *)textView {
-	if ([delegate respondsToSelector:@selector(growingTextViewDidChangeSelection:)]) {
-		[delegate growingTextViewDidChangeSelection:self];
+	if ([self.delegate respondsToSelector:@selector(growingTextViewDidChangeSelection:)]) {
+		[self.delegate growingTextViewDidChangeSelection:self];
 	}
 }
-
-
 
 @end
